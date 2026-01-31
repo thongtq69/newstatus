@@ -1,401 +1,313 @@
 const puppeteer = require('puppeteer');
 
-const TARGET_URL = 'https://www.facebook.com/groups/chocudanvinhomeq9/?sorting_setting=CHRONOLOGICAL';
-
-// Try different Facebook versions
-const FB_VERSIONS = {
-    mobile: 'https://m.facebook.com/groups/chocudanvinhomeq9/?sorting_setting=CHRONOLOGICAL',
-    mbasic: 'https://mbasic.facebook.com/groups/chocudanvinhomeq9/?sorting_setting=CHRONOLOGICAL',
-    touch: 'https://touch.facebook.com/groups/chocudanvinhomeq9/?sorting_setting=CHRONOLOGICAL'
-};
-
-// Mobile device configuration (iPhone 14 Pro Max)
-const MOBILE_CONFIG = {
-    viewport: {
-        width: 430,
-        height: 932,
-        deviceScaleFactor: 3,
-        isMobile: true,
-        hasTouch: true,
-        isLandscape: false
-    },
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
-};
+const GROUP_URL = 'https://www.facebook.com/groups/chocudanvinhomeq9/?sorting_setting=CHRONOLOGICAL';
 
 (async () => {
-    // Log function for visibility
     const log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
+    
+    let browser = null;
+    
+    try {
+        log('Launching browser...');
+        
+        browser = await puppeteer.launch({
+            headless: false,
+            defaultViewport: { width: 1366, height: 900 },
+            args: ['--disable-notifications', '--no-sandbox']
+        });
 
-    // Run once (set to while(true) for continuous mode)
-    for (let iteration = 0; iteration < 1; iteration++) {
-        let browser = null;
+        const pages = await browser.pages();
+        const page = pages.length > 0 ? pages[0] : await browser.newPage();
+
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+
+        // Login
+        log('Opening Facebook...');
+        await page.goto('https://www.facebook.com/', { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        log('');
+        log('══════════════════════════════════════════════════════════');
+        log('   VUI LÒNG ĐĂNG NHẬP VÀO FACEBOOK');
+        log('══════════════════════════════════════════════════════════');
+        log('');
+        
+        let loginSuccess = false;
+        let waitTime = 0;
+        
+        while (!loginSuccess && waitTime < 180) {
+            await new Promise(r => setTimeout(r, 3000));
+            waitTime += 3;
+            try {
+                const url = page.url();
+                if (url.includes('facebook.com') && !url.includes('/login') && !url.includes('checkpoint')) {
+                    const ok = await page.evaluate(() => {
+                        return !!(document.querySelector('[role="feed"]') || document.querySelector('[aria-label="Trang chủ"]'));
+                    });
+                    if (ok) { loginSuccess = true; log('✓ Đăng nhập thành công!'); }
+                }
+                if (!loginSuccess) process.stdout.write(`\rĐang chờ... (${waitTime}s)   `);
+            } catch (e) {}
+        }
+        if (!loginSuccess) { log('Timeout.'); return; }
+
+        // Go to group
+        log('');
+        log('Đang vào group...');
+        await page.goto(GROUP_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        log('Chờ trang load (8 giây)...');
+        await new Promise(r => setTimeout(r, 8000));
+        
+        // Close popup
         try {
-            log('Launching browser in MOBILE mode (iPhone 14 Pro Max)...');
+            const closeBtn = await page.$('div[aria-label="Đóng"]');
+            if (closeBtn) { await closeBtn.click(); await new Promise(r => setTimeout(r, 1000)); }
+        } catch (e) {}
+        
+        log('Đã vào group.');
 
-            browser = await puppeteer.launch({
-                headless: false,
-                defaultViewport: MOBILE_CONFIG.viewport,
-                args: [
-                    '--disable-notifications',
-                    '--no-sandbox',
-                    '--guest',
-                    `--window-size=${MOBILE_CONFIG.viewport.width},${MOBILE_CONFIG.viewport.height + 100}`
-                ]
-            });
+            log('');
+            log('══════════════════════════════════════════════════════════');
+            log('   CLICK VÀO NÚT BÌNH LUẬN ĐỂ LẤY URL');
+            log('══════════════════════════════════════════════════════════');
+            log('');
 
-            // Permissions might not work in Guest mode, but we try
-            const context = browser.defaultBrowserContext();
-            try {
-                await context.overridePermissions('https://www.facebook.com', []);
-            } catch (e) { /* ignore in guest */ }
-
-            // Use the first open page instead of creating a new one to avoid Protocol Error in Guest mode
-            const pages = await browser.pages();
-            const page = pages.length > 0 ? pages[0] : await browser.newPage();
-
-            // Set mobile viewport and User Agent
-            await page.setViewport(MOBILE_CONFIG.viewport);
-            await page.setUserAgent(MOBILE_CONFIG.userAgent);
-
-            log('Mobile mode configured: iPhone 14 Pro Max (430x932)');
-
-            // Step 1: Go to Google first (mobile mode)
-            log('Step 1: Opening Google in mobile mode...');
-            await page.goto('https://www.google.com', { waitUntil: 'networkidle2', timeout: 30000 });
-            await new Promise(r => setTimeout(r, 2000));
-            log('Google loaded in mobile mode successfully!');
-
-            // Take a screenshot to verify mobile mode
-            await page.screenshot({ path: 'google_mobile.png' });
-            log('Screenshot saved: google_mobile.png');
-
-            // Step 2: Go to m.facebook.com (shows some posts without login)
-            log('Step 2: Opening m.facebook.com (mobile version)...');
-            log(`Mobile URL: ${FB_VERSIONS.mobile}`);
-
-            await page.goto(FB_VERSIONS.mobile, { waitUntil: 'domcontentloaded', timeout: 60000 });
-            await new Promise(r => setTimeout(r, 4000));
-
-            await page.screenshot({ path: 'facebook_mobile_initial.png' });
-            log('Screenshot saved: facebook_mobile_initial.png');
-
-            // Check current URL
-            let currentUrl = page.url();
-            log(`Current URL: ${currentUrl}`);
-
-            // If redirected to login, try touch.facebook.com
-            if (currentUrl.includes('login') || currentUrl.includes('checkpoint')) {
-                log('Redirected to login. Trying touch.facebook.com...');
-                await page.goto(FB_VERSIONS.touch, { waitUntil: 'networkidle2', timeout: 60000 });
-                await new Promise(r => setTimeout(r, 4000));
-                await page.screenshot({ path: 'facebook_touch.png' });
-                currentUrl = page.url();
-            }
-
-            // Reload page once to ensure content loads
-            log('Reloading page to ensure content loads...');
-            await page.reload({ waitUntil: 'networkidle2', timeout: 60000 });
-            await new Promise(r => setTimeout(r, 3000));
-
-            log('Checking for popups...');
-            await new Promise(r => setTimeout(r, 3000));
-
-            // Generic closing logic for common Facebook popups
-            try {
-                // Try multiple close button selectors
-                const closeSelectors = [
-                    'div[role="dialog"] div[aria-label="Đóng"]',
-                    'div[role="dialog"] [aria-label="Close"]',
-                    '[data-sigil="dialog-cancel"]',
-                    'button[data-sigil="touchable"]'
-                ];
-
-                for (const selector of closeSelectors) {
-                    const closeButton = await page.$(selector);
-                    if (closeButton) {
-                        log(`Found close button: ${selector}. Clicking...`);
-                        await closeButton.click();
-                        await new Promise(r => setTimeout(r, 2000));
-                        break;
-                    }
-                }
-            } catch (err) {
-                log('Error handling popup: ' + err.message);
-            }
-
-            log('Starting scrape (mobile mode)...');
-
-            // Take screenshot
-            await page.screenshot({ path: 'facebook_scrape_start.png' });
-            log('Screenshot saved: facebook_scrape_start.png');
-
-            // Method 1: Extract visible post content directly from page
-            log('Method 1: Extracting visible post content from touch/m.facebook...');
-
-            const visiblePosts = await page.evaluate(() => {
-                const results = [];
-                const bodyText = document.body.innerText;
-
-                // For touch.facebook.com and m.facebook.com
-                // Look for posts by finding author name patterns
-                // Posts usually have: [Avatar] [Author Name] [Time] [Content]
-
-                // Method A: Find all elements with author-like structure
-                const allElements = document.querySelectorAll('*');
-                const seenAuthors = new Set();
-
-                allElements.forEach((el, idx) => {
-                    const text = el.innerText?.trim() || '';
-
-                    // Check if this looks like a post header (has time indicator)
-                    const hasTimeIndicator = /\d+\s*(phút|giờ|giây|ngày|h|m|s|minutes?|hours?|days?)/.test(text);
-
-                    // Look for posts with author pattern
-                    if (hasTimeIndicator && text.length > 20 && text.length < 2000) {
-                        // Try to extract author - usually first line or first bold text
-                        const lines = text.split('\n').filter(l => l.trim());
-                        if (lines.length >= 2) {
-                            const potentialAuthor = lines[0].trim();
-
-                            // Skip if it's just Facebook header or generic text
-                            if (potentialAuthor.length > 2 &&
-                                potentialAuthor.length < 50 &&
-                                !potentialAuthor.includes('facebook') &&
-                                !potentialAuthor.includes('Đăng nhập') &&
-                                !potentialAuthor.includes('Tham gia') &&
-                                !seenAuthors.has(potentialAuthor)) {
-
-                                seenAuthors.add(potentialAuthor);
-
-                                // Extract time
-                                const timeMatch = text.match(/(\d+\s*(phút|giờ|giây|ngày|h|m|s|minutes?|hours?|days?)\s*(trước)?)/i);
-                                const time = timeMatch ? timeMatch[0] : '';
-
-                                // Get content (everything after first 2 lines)
-                                const content = lines.slice(1).join(' ').substring(0, 300);
-
-                                results.push({
-                                    author: potentialAuthor,
-                                    time: time,
-                                    content: content,
-                                    elementTag: el.tagName,
-                                    textLength: text.length
-                                });
-                            }
-                        }
-                    }
-                });
-
-                // Method B: Look for specific Facebook mobile post structure
-                // Find elements that look like post containers
-                const postLikeElements = document.querySelectorAll([
-                    '[role="article"]',
-                    '[data-tracking]',
-                    'div > span + span',  // Author + time pattern
-                    'article'
-                ].join(', '));
-
-                postLikeElements.forEach((el, idx) => {
-                    const text = el.innerText?.trim() || '';
-                    if (text.length > 50 && text.length < 5000) {
-                        // Find all links in this post
-                        const links = Array.from(el.querySelectorAll('a[href]'));
-                        const postLink = links.find(a =>
-                            a.href.includes('permalink') ||
-                            a.href.includes('/posts/') ||
-                            a.href.includes('story')
-                        )?.href || '';
-
-                        const authorLink = links.find(a => a.href.includes('/profile.php') || a.href.includes('/user/'));
-                        const author = authorLink?.innerText?.trim() || '';
-
-                        if (author && !results.some(r => r.author === author)) {
-                            results.push({
-                                author: author,
-                                content: text.substring(0, 300),
-                                postLink: postLink,
-                                method: 'B'
-                            });
-                        }
-                    }
-                });
-
-                // Method C: Simple text extraction - find Vietnamese names followed by time
-                const nameTimeRegex = /([A-ZÀ-Ỹ][a-zà-ỹ]+\s+[A-ZÀ-Ỹ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỹ][a-zà-ỹ]+)?)\s*[\n\r]+\s*(\d+\s*(?:phút|giờ|giây|ngày))/g;
-                let match;
-                while ((match = nameTimeRegex.exec(bodyText)) !== null) {
-                    const author = match[1];
-                    const time = match[2];
-                    if (!results.some(r => r.author === author)) {
-                        results.push({
-                            author: author,
-                            time: time,
-                            method: 'C'
-                        });
-                    }
-                }
-
-                return results;
-            });
-
-            log(`Found ${visiblePosts.length} posts with Method 1`);
-
-            // Filter and dedupe - remove Facebook headers and UI elements
-            const filterWords = [
-                'Mở ứng dụng', 'Đăng nhập', 'Tham gia', 'facebook',
-                'CHỢ CƯ DÂN', 'VINHOME', 'GRAND PARK', 'Nhóm Công khai',
-                'thành viên', 'Giới thiệu', 'NỘI DUNG', 'DUYỆT',
-                'Tạo tài khoản', 'Còn nhiều nội dung'
-            ];
-
-            const uniquePosts = [];
-            const seenAuthors = new Set();
-
-            visiblePosts.forEach(p => {
-                if (!p.author) return;
-
-                // Skip if author looks like Facebook UI element
-                const isUI = filterWords.some(word =>
-                    p.author.toUpperCase().includes(word.toUpperCase())
-                );
-                if (isUI) return;
-
-                // Skip if content is mostly group info
-                const contentIsUI = p.content && filterWords.some(word =>
-                    p.content.substring(0, 100).toUpperCase().includes(word.toUpperCase())
-                );
-                if (contentIsUI && !p.time) return;
-
-                // Skip very short or very long author names
-                if (p.author.length < 2 || p.author.length > 40) return;
-
-                if (!seenAuthors.has(p.author)) {
-                    seenAuthors.add(p.author);
-                    uniquePosts.push(p);
-                }
-            });
-
-            console.log('\n');
-            console.log('╔══════════════════════════════════════════════════════════════╗');
-            console.log('║           BÀI VIẾT TÌM ĐƯỢC TỪ GROUP (MOBILE MODE)           ║');
-            console.log('╚══════════════════════════════════════════════════════════════╝');
-
-            if (uniquePosts.length === 0) {
-                console.log('\nKhông tìm được bài viết. Facebook yêu cầu đăng nhập.');
-            } else {
-                uniquePosts.slice(0, 10).forEach((p, i) => {
-                    console.log(`\n┌─── Bài viết ${i + 1} ───────────────────────────────────────────┐`);
-                    console.log(`│ Tác giả: ${p.author}`);
-                    console.log(`│ Thời gian: ${p.time || 'N/A'}`);
-                    if (p.content) {
-                        const cleanContent = p.content.replace(/\s+/g, ' ').substring(0, 150);
-                        console.log(`│ Nội dung: ${cleanContent}...`);
-                    }
-                    if (p.postLink) console.log(`│ Link: ${p.postLink}`);
-                    console.log('└────────────────────────────────────────────────────────────────┘');
-                });
-            }
-            console.log(`\nTổng số bài viết tìm được: ${uniquePosts.length}`);
-
-            // Method 2: Try getting all links with post patterns
-            log('\nMethod 2: Searching for post URLs...');
-
-            let scrapedPosts = new Set();
+            const postUrls = new Set();
+            const processedContent = new Set(); // Lưu nội dung bài đã xử lý
             let attempts = 0;
-            const MAX_ATTEMPTS = 10;
-
-            while (scrapedPosts.size < 5 && attempts < MAX_ATTEMPTS) {
-                const newPosts = await page.evaluate(() => {
-                    const results = [];
-                    const anchors = Array.from(document.querySelectorAll('a'));
-
-                    // Extended patterns for all Facebook versions
-                    const patterns = [
-                        /\/groups\/[^\/]+\/posts\/\d+/,
-                        /\/groups\/[^\/]+\/permalink\/\d+/,
-                        /\/story\.php\?story_fbid=\d+/,
-                        /\/groups\/\d+\?view=permalink/,
-                        /\?id=\d+&story_fbid=\d+/,
-                        /\/comment\/replies/,
-                        /multi_permalinks/
-                    ];
-
-                    anchors.forEach(a => {
-                        const href = a.href || '';
-                        for (const pattern of patterns) {
-                            if (pattern.test(href)) {
-                                results.push({
-                                    url: href.split('&refid=')[0],
-                                    text: a.innerText?.substring(0, 80) || ''
+            
+            // Scroll và click vào các nút bình luận
+            while (postUrls.size < 5 && attempts < 20) {
+                attempts++;
+                log(`Lần thử ${attempts} - Đã có ${postUrls.size} URLs`);
+                
+                // Tìm tất cả nút "Bình luận" trên trang
+                const commentButtons = await page.evaluate(() => {
+                    const buttons = [];
+                    // Tìm các nút có text "Bình luận" (có thể là span hoặc div)
+                    const allElements = document.querySelectorAll('span, div[role="button"]');
+                    
+                    allElements.forEach(el => {
+                        const text = el.textContent.trim();
+                        if (text === 'Bình luận' || text.includes('bình luận')) {
+                            // Tìm element cha clickable
+                            let clickable = el.closest('div[role="button"]');
+                            if (clickable) {
+                                buttons.push({
+                                    text: text,
+                                    hasButton: true
                                 });
-                                break;
                             }
                         }
                     });
-
-                    return results;
+                    
+                    return buttons.length;
                 });
-
-                newPosts.forEach(post => scrapedPosts.add(JSON.stringify(post)));
-                log(`Found ${scrapedPosts.size} unique post URLs... (attempt ${attempts + 1}/${MAX_ATTEMPTS})`);
-
-                if (scrapedPosts.size >= 5) break;
-
-                // Scroll down
-                await page.evaluate(() => window.scrollBy(0, 400));
-                await new Promise(r => setTimeout(r, 2000));
-                attempts++;
-
-                // Check for login wall
-                const hasLoginWall = await page.evaluate(() => {
-                    return document.body.innerText.includes('Đăng nhập') &&
-                        document.body.innerText.includes('Còn nhiều nội dung');
-                });
-
-                if (hasLoginWall) {
-                    log('Login wall detected! Cannot scroll further without login.');
-                    await page.screenshot({ path: 'facebook_login_wall.png' });
-                    break;
+                
+                if (commentButtons === 0) {
+                    log('Không tìm thấy nút bình luận, scroll xuống...');
+                    await page.evaluate(() => window.scrollBy(0, 400));
+                    await new Promise(r => setTimeout(r, 2000));
+                    continue;
+                }
+                
+                log(`Tìm thấy ${commentButtons} nút bình luận`);
+                
+                // Click vào nút bình luận đầu tiên chưa xử lý
+                try {
+                    const clicked = await page.evaluate(() => {
+                        const allElements = document.querySelectorAll('span, div[role="button"]');
+                        
+                        for (let el of allElements) {
+                            const text = el.textContent.trim();
+                            if ((text === 'Bình luận' || text.includes('bình luận')) && 
+                                !el.hasAttribute('data-processed')) {
+                                
+                                const clickable = el.closest('div[role="button"]');
+                                if (clickable) {
+                                    // Đánh dấu đã xử lý
+                                    el.setAttribute('data-processed', 'true');
+                                    clickable.click();
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    });
+                    
+                    if (!clicked) {
+                        log('Không thể click, scroll tiếp...');
+                        await page.evaluate(() => window.scrollBy(0, 400));
+                        await new Promise(r => setTimeout(r, 2000));
+                        continue;
+                    }
+                    
+                    // Đợi popup mở
+                    await new Promise(r => setTimeout(r, 2000));
+                    log('  → Popup đã mở, tìm timestamp để click...');
+                    
+                    // LƯU HTML của popup để debug (chỉ lần đầu)
+                    if (attempts === 1) {
+                        const popupHtml = await page.evaluate(() => {
+                            const dialog = document.querySelector('div[role="dialog"]');
+                            return dialog ? dialog.innerHTML : '';
+                        });
+                        const fs = require('fs');
+                        fs.writeFileSync('popup_debug.html', popupHtml);
+                        log('  → Đã lưu popup HTML vào popup_debug.html');
+                    }
+                    
+                    // Lấy nội dung bài viết từ popup để debug
+                    const postContent = await page.evaluate(() => {
+                        // Tìm popup
+                        const dialog = document.querySelector('div[role="dialog"]');
+                        if (!dialog) return null;
+                        
+                        // Lấy title
+                        const title = dialog.querySelector('h2, span[dir="auto"]');
+                        
+                        // Lấy author và time
+                        const timeElements = dialog.querySelectorAll('span');
+                        let author = '';
+                        let timeText = '';
+                        
+                        timeElements.forEach(span => {
+                            const text = span.textContent.trim();
+                            if (text.includes('phút') || text.includes('giờ') || text.includes('ngày')) {
+                                timeText = text;
+                            }
+                        });
+                        
+                        // Lấy nội dung chính
+                        const contentDivs = dialog.querySelectorAll('div[dir="auto"]');
+                        let content = '';
+                        contentDivs.forEach(div => {
+                            const text = div.textContent.trim();
+                            if (text.length > 10) {
+                                content = text;
+                            }
+                        });
+                        
+                        return {
+                            title: title?.textContent.trim() || '',
+                            timeText: timeText,
+                            content: content
+                        };
+                    });
+                    
+                    if (postContent) {
+                        const contentKey = postContent.content.substring(0, 50);
+                        
+                        // Kiểm tra xem đã xử lý bài này chưa
+                        if (processedContent.has(contentKey)) {
+                            log(`  × Bài này đã xử lý rồi, scroll xuống...`);
+                            await page.evaluate(() => {
+                                const closeBtn = document.querySelector('div[aria-label="Đóng"]');
+                                if (closeBtn) closeBtn.click();
+                            });
+                            await new Promise(r => setTimeout(r, 500));
+                            await page.evaluate(() => window.scrollBy(0, 800));
+                            await new Promise(r => setTimeout(r, 2000));
+                            continue;
+                        }
+                        
+                        processedContent.add(contentKey);
+                        log(`  → Bài: "${contentKey}..."`);
+                        log(`  → Time: "${postContent.timeText}"`);
+                    }
+                    
+                    // Click vào timestamp trong popup
+                    // THAY ĐỔI CHIẾN LƯỢC: Lấy post ID từ ảnh hoặc từ DOM
+                    const postUrl = await page.evaluate(() => {
+                        const dialog = document.querySelector('div[role="dialog"]');
+                        if (!dialog) return null;
+                        
+                        // Tìm post ID từ photo link (pcb.XXXXX)
+                        const photoLinks = dialog.querySelectorAll('a[href*="/photo/"]');
+                        for (let link of photoLinks) {
+                            const href = link.href;
+                            const match = href.match(/pcb\.(\d+)/);
+                            if (match) {
+                                return `https://www.facebook.com/groups/chocudanvinhomeq9/permalink/${match[1]}/`;
+                            }
+                        }
+                        
+                        // Backup: Tìm trong data attributes
+                        const allElements = dialog.querySelectorAll('[data-id], [id]');
+                        for (let el of allElements) {
+                            const dataId = el.getAttribute('data-id') || el.id;
+                            if (dataId && dataId.match(/^\d{10,}$/)) {
+                                return `https://www.facebook.com/groups/chocudanvinhomeq9/permalink/${dataId}/`;
+                            }
+                        }
+                        
+                        return null;
+                    });
+                    
+                    if (!postUrl) {
+                        log('  × Không tìm thấy post URL, đóng popup...');
+                        await page.evaluate(() => {
+                            const closeBtn = document.querySelector('div[aria-label="Đóng"]');
+                            if (closeBtn) closeBtn.click();
+                        });
+                        await new Promise(r => setTimeout(r, 1000));
+                        continue;
+                    }
+                    
+                    log(`  ✓ Lấy được URL từ popup: ${postUrl}`);
+                    
+                    if (!postUrls.has(postUrl)) {
+                        postUrls.add(postUrl);
+                        log(`  ✓✓ Đã thêm URL ${postUrls.size}`);
+                    }
+                    
+                    // Đóng popup
+                    await page.evaluate(() => {
+                        const closeBtn = document.querySelector('div[aria-label="Đóng"]');
+                        if (closeBtn) closeBtn.click();
+                    });
+                    
+                    await new Promise(r => setTimeout(r, 1000));
+                    
+                } catch (e) {
+                    log(`Lỗi khi click: ${e.message}`);
+                }
+                
+                // Nếu chưa đủ, scroll xuống một chút để load thêm bài
+                if (postUrls.size < 5 && attempts % 2 === 0) {
+                    log('  ↓ Scroll xuống để load thêm bài...');
+                    await page.evaluate(() => window.scrollBy(0, 1000));
+                    await new Promise(r => setTimeout(r, 2500));
                 }
             }
 
-            // Final output
-            const finalPosts = Array.from(scrapedPosts).slice(0, 5).map(p => JSON.parse(p));
-            console.log('\n========== POST URLs FOUND ==========');
-            if (finalPosts.length > 0) {
-                finalPosts.forEach((post, idx) => {
-                    console.log(`${idx + 1}. ${post.url}`);
-                    if (post.text) console.log(`   Preview: ${post.text}`);
-                });
-            } else {
-                console.log('No post URLs found. Posts visible but no direct links available without login.');
-                console.log('Check screenshots for visible content.');
-            }
-            console.log('=====================================\n');
-
-            // Save page HTML for debugging
-            const fs = require('fs');
-            const html = await page.content();
-            fs.writeFileSync('facebook_page.html', html);
-            log('Page HTML saved to facebook_page.html for debugging');
-
-            log('Job done!');
-
-            // Keep browser open for 10 seconds so user can see
-            log('Browser will close in 10 seconds...');
-            await new Promise(r => setTimeout(r, 10000));
-
-        } catch (error) {
-            console.error('Error:', error.message);
-        } finally {
-            if (browser) {
-                try {
-                    await browser.close();
-                } catch (closeErr) { }
-            }
+        // Output
+        console.log('\n');
+        console.log('╔══════════════════════════════════════════════════════════════╗');
+        console.log('║              5 URL BÀI VIẾT ĐẦU TIÊN                         ║');
+        console.log('╚══════════════════════════════════════════════════════════════╝');
+        
+        const finalUrls = Array.from(postUrls).slice(0, 5);
+        
+        if (finalUrls.length > 0) {
+            finalUrls.forEach((url, idx) => {
+                console.log(`\n${idx + 1}. ${url}`);
+            });
+            console.log(`\n\nTổng: ${finalUrls.length} URLs`);
+        } else {
+            console.log('\nKhông lấy được URL.');
+            console.log('Facebook có thể yêu cầu đăng nhập hoặc chặn scraping.');
         }
-    }
+        console.log('════════════════════════════════════════════════════════════════\n');
 
-    // Exit after one iteration (remove this line to run continuously)
-    process.exit(0);
+        await page.screenshot({ path: 'final_result.png' });
+        log('Screenshot: final_result.png');
+        log('Browser đóng sau 10 giây...');
+        await new Promise(r => setTimeout(r, 10000));
+
+    } catch (error) {
+        console.error('Error:', error.message);
+    } finally {
+        if (browser) await browser.close();
+    }
 })();
