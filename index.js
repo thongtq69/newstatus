@@ -1,9 +1,92 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const { execSync } = require('child_process');
 
 // Đọc URL từ file config
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.GROUP_URL}?sorting_setting=CHRONOLOGICAL`;
+
+// Function để mở bài viết và lưu nội dung
+async function savePostContent(page, postUrl, log) {
+    try {
+        log(`  → Đang mở bài viết: ${postUrl}`);
+        
+        // Mở bài viết trong tab mới hoặc cùng tab
+        await page.goto(postUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+        
+        // Chờ trang load
+        await new Promise(r => setTimeout(r, 8000));
+        
+        // Trích xuất nội dung bài viết
+        const postContent = await page.evaluate(() => {
+            // Tìm element chứa nội dung bài viết
+            // Thử nhiều selector khác nhau
+            const selectors = [
+                '[data-ad-preview="message"]',
+                '[data-testid="post_message"]',
+                'div[data-ad-comet-preview="message"]',
+                'div[dir="auto"][data-testid]',
+                'div[data-pagelet="FeedUnit"] div[dir="auto"]',
+                'article div[dir="auto"]'
+            ];
+            
+            for (let selector of selectors) {
+                const element = document.querySelector(selector);
+                if (element) {
+                    const text = element.textContent.trim();
+                    if (text && text.length > 10) {
+                        return text;
+                    }
+                }
+            }
+            
+            // Fallback: Tìm tất cả div có dir="auto" và lấy text dài nhất
+            const allDivs = document.querySelectorAll('div[dir="auto"]');
+            let longestText = '';
+            for (let div of allDivs) {
+                const text = div.textContent.trim();
+                if (text.length > longestText.length && text.length > 50) {
+                    longestText = text;
+                }
+            }
+            
+            return longestText || 'Không tìm thấy nội dung';
+        });
+        
+        // Lưu vào file (tất cả bài viết trong cùng 1 file)
+        const filename = 'post_contents.txt';
+        
+        // Kiểm tra xem file đã tồn tại chưa
+        let fileContent = '';
+        if (fs.existsSync(filename)) {
+            fileContent = fs.readFileSync(filename, 'utf8');
+        }
+        
+        // Thêm nội dung mới
+        fileContent += `\n${'='.repeat(60)}\n`;
+        fileContent += `URL: ${postUrl}\n`;
+        fileContent += `Thời gian: ${new Date().toLocaleString('vi-VN')}\n`;
+        fileContent += `${'='.repeat(60)}\n\n`;
+        fileContent += `NỘI DUNG:\n${postContent}\n\n`;
+        
+        fs.writeFileSync(filename, fileContent, 'utf8');
+        log(`  ✓ Đã lưu nội dung vào: ${filename}`);
+        
+        // Quay lại group page
+        await page.goto(GROUP_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+        await new Promise(r => setTimeout(r, 3000));
+        
+    } catch (error) {
+        log(`  × Lỗi khi lưu nội dung bài viết: ${error.message}`);
+        // Quay lại group page nếu có lỗi
+        try {
+            await page.goto(GROUP_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+            await new Promise(r => setTimeout(r, 3000));
+        } catch (e) {
+            log(`  × Lỗi khi quay lại group: ${e.message}`);
+        }
+    }
+}
 
 (async () => {
     const log = (msg) => console.log(`[${new Date().toLocaleTimeString()}] ${msg}`);
@@ -80,7 +163,7 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
         let attempts = 0;
         
         // Scroll và click vào các nút "Chia sẻ"
-        while (postUrls.size < 5 && attempts < 20) {
+        while (postUrls.size < 10 && attempts < 40) {
             attempts++;
             log(`Lần thử ${attempts} - Đã có ${postUrls.size} URLs`);
             
@@ -175,25 +258,45 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
                             // Tìm element cha có thể chứa URL
                             const clickable = el.closest('div[role="button"], a');
                             if (clickable) {
-                                // Thử lấy href trực tiếp
+                                // Thử lấy href trực tiếp (CHỈ LẤY /share/p/)
                                 const href = clickable.href || clickable.getAttribute('href');
                                 if (href && href.includes('facebook.com')) {
-                                    return href.split('?')[0].split('#')[0];
+                                    // BỎ QUA nếu là /share/g/ hoặc /groups/.../posts/
+                                    if (href.includes('/share/g/') || (href.includes('/groups/') && href.includes('/posts/'))) {
+                                        // Skip
+                                    } else if (href.includes('/share/p/')) {
+                                        // CHỈ LẤY /share/p/
+                                        return href.split('?')[0].split('#')[0];
+                                    }
                                 }
                                 
-                                // Thử lấy từ data attribute
+                                // Thử lấy từ data attribute (CHỈ LẤY /share/p/)
                                 const dataHref = clickable.getAttribute('data-href') || 
                                                 clickable.getAttribute('data-url');
                                 if (dataHref && dataHref.includes('facebook.com')) {
-                                    return dataHref.split('?')[0].split('#')[0];
+                                    // BỎ QUA nếu là /share/g/ hoặc /groups/.../posts/
+                                    if (dataHref.includes('/share/g/') || (dataHref.includes('/groups/') && dataHref.includes('/posts/'))) {
+                                        // Skip
+                                    } else if (dataHref.includes('/share/p/')) {
+                                        // CHỈ LẤY /share/p/
+                                        return dataHref.split('?')[0].split('#')[0];
+                                    }
                                 }
                                 
-                                // Thử tìm trong parent elements
+                                // Thử tìm trong parent elements (CHỈ LẤY /share/p/)
                                 let parent = clickable.parentElement;
                                 for (let i = 0; i < 5 && parent; i++) {
                                     const parentHref = parent.href || parent.getAttribute('href');
-                                    if (parentHref && parentHref.includes('facebook.com/groups')) {
-                                        return parentHref.split('?')[0].split('#')[0];
+                                    if (parentHref && parentHref.includes('facebook.com')) {
+                                        // BỎ QUA nếu là /share/g/ hoặc /groups/.../posts/
+                                        if (parentHref.includes('/share/g/') || (parentHref.includes('/groups/') && parentHref.includes('/posts/'))) {
+                                            parent = parent.parentElement;
+                                            continue;
+                                        }
+                                        // CHỈ LẤY /share/p/
+                                        if (parentHref.includes('/share/p/')) {
+                                            return parentHref.split('?')[0].split('#')[0];
+                                        }
                                     }
                                     parent = parent.parentElement;
                                 }
@@ -201,11 +304,17 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
                         }
                     }
                     
-                    // Backup: Tìm tất cả links trong popup có chứa /groups/ và /permalink/ hoặc /posts/
-                    const allLinks = dialog.querySelectorAll('a[href*="/groups/"]');
+                    // Backup: Tìm tất cả links trong popup
+                    // CHỈ LẤY /share/p/ (KHÔNG lấy /groups/.../posts/ vì trùng)
+                    const allLinks = dialog.querySelectorAll('a[href*="facebook.com"]');
                     for (let link of allLinks) {
                         const href = link.href;
-                        if (href && (href.includes('/permalink/') || href.includes('/posts/'))) {
+                        // BỎ QUA nếu là /share/g/ hoặc /groups/.../posts/
+                        if (href && (href.includes('/share/g/') || href.includes('/groups/') && href.includes('/posts/'))) {
+                            continue;
+                        }
+                        // CHỈ LẤY nếu là /share/p/
+                        if (href && href.includes('/share/p/')) {
                             return href.split('?')[0].split('#')[0];
                         }
                     }
@@ -238,24 +347,59 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
                     });
                     
                     if (copied) {
-                        await new Promise(r => setTimeout(r, 1500));
+                        log('  → Đã click nút Sao chép liên kết, đợi clipboard cập nhật...');
+                        // Tăng delay để đảm bảo clipboard đã được cập nhật
+                        await new Promise(r => setTimeout(r, 2500));
                         
-                        // Đọc từ clipboard
-                        const clipboardText = await page.evaluate(async () => {
-                            try {
-                                return await navigator.clipboard.readText();
-                            } catch (e) {
-                                return null;
+                        // Đọc từ clipboard HỆ THỐNG (macOS) thay vì browser context
+                        let clipboardText = null;
+                        try {
+                            clipboardText = execSync('pbpaste', { encoding: 'utf8', timeout: 1000 }).trim();
+                        } catch (e) {
+                            log(`  × Lỗi đọc clipboard hệ thống: ${e.message}`);
+                        }
+                        
+                        log(`  → Clipboard content: ${clipboardText ? clipboardText.substring(0, 80) + '...' : 'null'}`);
+                        
+                        // PHÂN BIỆT: Bỏ qua URL /share/g/ (group share), chỉ lấy /share/p/ (post share)
+                        if (clipboardText && clipboardText.includes('facebook.com')) {
+                            // BỎ QUA nếu là link chia sẻ group
+                            if (clipboardText.includes('/share/g/')) {
+                                log(`  × Bỏ qua URL chia sẻ group: ${clipboardText.substring(0, 60)}...`);
+                                // Đóng popup và tiếp tục
+                                await page.evaluate(() => {
+                                    const closeBtn = document.querySelector('div[aria-label="Đóng"], div[aria-label="Close"]');
+                                    if (closeBtn) closeBtn.click();
+                                });
+                                await new Promise(r => setTimeout(r, 1000));
+                                // Xóa clipboard
+                                try {
+                                    execSync('echo "" | pbcopy', { timeout: 1000 });
+                                } catch (e) {}
+                                continue;
                             }
-                        });
-                        
-                        if (clipboardText && clipboardText.includes('facebook.com/groups')) {
-                            const cleanUrl = clipboardText.split('?')[0].split('#')[0];
-                            log(`  ✓ Lấy được URL từ clipboard: ${cleanUrl}`);
                             
-                            if (!postUrls.has(cleanUrl)) {
-                                postUrls.add(cleanUrl);
-                                log(`  ✓✓ Đã thêm URL ${postUrls.size}`);
+                            // CHỈ LẤY URL dạng /share/p/ (KHÔNG lấy /groups/.../posts/ vì trùng)
+                            if (clipboardText.includes('/share/p/')) {
+                                let cleanUrl = clipboardText.split('?')[0].split('#')[0].trim();
+                                
+                                log(`  ✓ Lấy được URL từ clipboard hệ thống: ${cleanUrl}`);
+                                
+                                if (!postUrls.has(cleanUrl)) {
+                                    postUrls.add(cleanUrl);
+                                    log(`  ✓✓ Đã thêm URL ${postUrls.size}`);
+                                    // Lưu nội dung sẽ được thực hiện sau khi lấy đủ tất cả URLs
+                                }
+                            } else {
+                                log(`  × URL không phải là bài post (/share/p/). Bỏ qua: ${clipboardText.substring(0, 60)}...`);
+                            }
+                            
+                            // XÓA CLIPBOARD HỆ THỐNG sau khi lưu để tránh đầy
+                            try {
+                                execSync('echo "" | pbcopy', { timeout: 1000 });
+                                log('  → Đã xóa clipboard hệ thống');
+                            } catch (e) {
+                                log(`  × Không thể xóa clipboard: ${e.message}`);
                             }
                             
                             // Đóng popup
@@ -266,7 +410,7 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
                             await new Promise(r => setTimeout(r, 1000));
                             continue;
                         } else {
-                            log('  × Clipboard không chứa URL hợp lệ');
+                            log(`  × Clipboard không chứa URL hợp lệ. Nội dung: ${clipboardText ? clipboardText.substring(0, 100) : 'null'}`);
                         }
                     } else {
                         log('  × Không tìm thấy nút Sao chép liên kết');
@@ -294,11 +438,36 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
                     continue;
                 }
                 
-                log(`  ✓ Lấy được URL từ popup: ${postUrl}`);
+                // PHÂN BIỆT: Bỏ qua URL /share/g/ (group share), chỉ lấy /share/p/ (post share)
+                if (postUrl && postUrl.includes('/share/g/')) {
+                    log(`  × Bỏ qua URL chia sẻ group: ${postUrl}`);
+                    // Đóng popup và tiếp tục
+                    await page.evaluate(() => {
+                        const closeBtn = document.querySelector('div[aria-label="Đóng"], div[aria-label="Close"], div[role="button"][aria-label*="Đóng"], div[role="button"][aria-label*="Close"]');
+                        if (closeBtn) closeBtn.click();
+                    });
+                    await new Promise(r => setTimeout(r, 1000));
+                    continue;
+                }
                 
-                if (!postUrls.has(postUrl)) {
-                    postUrls.add(postUrl);
-                    log(`  ✓✓ Đã thêm URL ${postUrls.size}`);
+                // CHỈ LẤY URL dạng /share/p/ (KHÔNG lấy /groups/.../posts/ vì trùng)
+                if (postUrl && postUrl.includes('/share/p/')) {
+                    log(`  ✓ Lấy được URL từ popup: ${postUrl}`);
+                    
+                    if (!postUrls.has(postUrl)) {
+                        postUrls.add(postUrl);
+                        log(`  ✓✓ Đã thêm URL ${postUrls.size}`);
+                        // Lưu nội dung sẽ được thực hiện sau khi lấy đủ tất cả URLs
+                    }
+                } else if (postUrl) {
+                    log(`  × URL không phải là bài post (/share/p/). Bỏ qua: ${postUrl}`);
+                    // Đóng popup và tiếp tục
+                    await page.evaluate(() => {
+                        const closeBtn = document.querySelector('div[aria-label="Đóng"], div[aria-label="Close"], div[role="button"][aria-label*="Đóng"], div[role="button"][aria-label*="Close"]');
+                        if (closeBtn) closeBtn.click();
+                    });
+                    await new Promise(r => setTimeout(r, 1000));
+                    continue;
                 }
                 
                 // Đóng popup "Chia sẻ"
@@ -314,7 +483,7 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
             }
             
             // Nếu chưa đủ, scroll xuống một chút để load thêm bài
-            if (postUrls.size < 5 && attempts % 2 === 0) {
+            if (postUrls.size < 10 && attempts % 2 === 0) {
                 log('  ↓ Scroll xuống để load thêm bài...');
                 await page.evaluate(() => window.scrollBy(0, 1000));
                 await new Promise(r => setTimeout(r, 2500));
@@ -324,21 +493,55 @@ const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.
         // Output
         console.log('\n');
         console.log('╔══════════════════════════════════════════════════════════════╗');
-        console.log('║              5 URL BÀI VIẾT ĐẦU TIÊN                         ║');
+        console.log('║              10 URL BÀI VIẾT ĐẦU TIÊN                         ║');
         console.log('╚══════════════════════════════════════════════════════════════╝');
         
-        const finalUrls = Array.from(postUrls).slice(0, 5);
+        const finalUrls = Array.from(postUrls).slice(0, 10);
         
         if (finalUrls.length > 0) {
             finalUrls.forEach((url, idx) => {
                 console.log(`\n${idx + 1}. ${url}`);
             });
             console.log(`\n\nTổng: ${finalUrls.length} URLs`);
+            
+            // LƯU VÀO FILE
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `scraped_urls_${timestamp}.txt`;
+            const fileContent = finalUrls.join('\n');
+            fs.writeFileSync(filename, fileContent, 'utf8');
+            log(`✓ Đã lưu ${finalUrls.length} URLs vào file: ${filename}`);
         } else {
             console.log('\nKhông lấy được URL.');
             console.log('Facebook có thể yêu cầu đăng nhập hoặc chặn scraping.');
         }
         console.log('════════════════════════════════════════════════════════════════\n');
+
+        // BẮT ĐẦU LƯU NỘI DUNG CÁC BÀI VIẾT
+        if (finalUrls.length > 0) {
+            log('');
+            log('══════════════════════════════════════════════════════════════');
+            log('   BẮT ĐẦU LƯU NỘI DUNG CÁC BÀI VIẾT');
+            log('══════════════════════════════════════════════════════════════');
+            log('');
+            
+            for (let i = 0; i < finalUrls.length; i++) {
+                const url = finalUrls[i];
+                log(`[${i + 1}/${finalUrls.length}] Đang lưu nội dung bài viết ${i + 1}...`);
+                await savePostContent(page, url, log);
+                log(`[${i + 1}/${finalUrls.length}] ✓ Hoàn thành bài viết ${i + 1}`);
+                log('');
+                
+                // Delay giữa các bài viết để tránh bị chặn
+                if (i < finalUrls.length - 1) {
+                    await new Promise(r => setTimeout(r, 3000));
+                }
+            }
+            
+            log('══════════════════════════════════════════════════════════════');
+            log(`✓ Đã lưu nội dung ${finalUrls.length} bài viết vào file: post_contents.txt`);
+            log('══════════════════════════════════════════════════════════════');
+            log('');
+        }
 
         await page.screenshot({ path: 'final_result.png' });
         log('Screenshot: final_result.png');
