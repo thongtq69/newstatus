@@ -1,3 +1,11 @@
 node_modules
 .DS_Store
 screenshots
+*.html
+*.png
+popup_no_url_*.html
+config.json
+!facebook_page.html
+!debug_page.html
+!popup_debug.html
+!public/**/*.html

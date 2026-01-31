@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Scraper UI</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+        .container { background: white; padding: 40px; border-radius: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
+        h1 { color: #1877f2; text-align: center; margin-bottom: 30px; }
+        .form-group { margin-bottom: 25px; }
+        label { display: block; margin-bottom: 10px; font-weight: bold; color: #444; }
+        input { width: 100%; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 16px; box-sizing: border-box; transition: border-color 0.2s; }
+        input:focus { border-color: #1877f2; outline: none; }
+        .btn-group { display: grid; gap: 15px; }
+        button { padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; transition: transform 0.1s, filter 0.2s; }
+        button:active { transform: scale(0.98); }
+        .btn-save { background: #1877f2; color: white; }
+        .btn-run { background: #42b72a; color: white; }
+        #status { margin-top: 20px; text-align: center; color: #666; font-style: italic; }
+        .hint { font-size: 12px; color: #888; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Facebook Scraper</h1>
+        
+        <div class="form-group">
+            <label for="groupUrl">Facebook Group URL</label>
+            <input type="text" id="groupUrl" placeholder="https://www.facebook.com/groups/...">
+            <div class="hint">Ví dụ: https://www.facebook.com/groups/chocudanvinhomeq9/</div>
+        </div>
+
+        <div class="btn-group">
+            <button class="btn-save" onclick="save()">Lưu Cấu Hình</button>
+            <button class="btn-run" onclick="run()">Bắt Đầu Quét Bài Viết</button>
+        </div>
+
+        <div id="status">Sẵn sàng.</div>
+    </div>
+
+    <script>
+        // Load hiện tại
+        fetch('/api/config')
+            .then(r => {
+                if (!r.ok) throw new Error('Không thể kết nối server');
+                return r.json();
+            })
+            .then(data => {
+                if (data.GROUP_URL) {
+                    document.getElementById('groupUrl').value = data.GROUP_URL;
+                }
+            })
+            .catch(err => {
+                document.getElementById('status').innerText = 'Lỗi: ' + err.message;
+                document.getElementById('status').style.color = 'red';
+            });
+
+        function save() {
+            const url = document.getElementById('groupUrl').value.trim();
+            if (!url) {
+                alert('Vui lòng nhập URL group!');
+                return;
+            }
+            
+            const s = document.getElementById('status');
+            s.innerText = 'Đang lưu...';
+            s.style.color = '#1877f2';
+            
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({GROUP_URL: url})
+            })
+            .then(r => {
+                if (!r.ok) throw new Error('Lỗi khi lưu');
+                return r.json();
+            })
+            .then(data => {
+                s.innerText = data.message || 'Đã lưu thành công!';
+                s.style.color = '#1877f2';
+                setTimeout(() => {
+                    s.innerText = 'Sẵn sàng.';
+                    s.style.color = '#666';
+                }, 3000);
+            })
+            .catch(err => {
+                s.innerText = 'Lỗi: ' + err.message;
+                s.style.color = 'red';
+            });
+        }
+
+        function run() {
+            const s = document.getElementById('status');
+            s.innerText = 'Đang khởi động script...';
+            s.style.color = '#42b72a';
+            
+            fetch('/api/run', {method: 'POST'})
+                .then(r => {
+                    if (!r.ok) throw new Error('Không thể khởi động script');
+                    return r.json();
+                })
+                .then(data => {
+                    s.innerText = data.message || 'Script đã khởi động!';
+                    alert(data.message || 'Script đang chạy! Hãy kiểm tra Terminal để theo dõi.');
+                })
+                .catch(err => {
+                    s.innerText = 'Lỗi: ' + err.message;
+                    s.style.color = 'red';
+                    alert('Lỗi: ' + err.message);
+                });
+        }
+    </script>
+</body>
+</html>
