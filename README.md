@@ -9,6 +9,15 @@ Script này tự động quét và lưu các bài viết mới nhất từ Faceb
 4. Lấy URL từ popup "Sao chép liên kết"
 5. Mở bài viết và lưu nội dung
 
+## Hỗ trợ Hệ điều hành
+
+Script hỗ trợ **cross-platform** và hoạt động trên:
+- ✅ **Windows** (PowerShell)
+- ✅ **macOS** (pbpaste/pbcopy)
+- ✅ **Linux** (xclip/xsel)
+
+Clipboard được tự động detect và sử dụng lệnh phù hợp với từng hệ điều hành.
+
 ## Cấu trúc Project
 
 ```
@@ -81,12 +90,19 @@ const allElements = document.querySelectorAll('span, div[role="button"]');
 **Phương pháp 2: Click và đọc từ clipboard**
 - Click vào nút "Sao chép liên kết"
 - Đợi 2.5 giây để clipboard cập nhật
-- Đọc từ clipboard hệ thống (macOS): `execSync('pbpaste')`
-- Xóa clipboard sau khi lấy: `execSync('echo "" | pbcopy')`
+- Đọc từ clipboard hệ thống (cross-platform):
+  - **Windows**: `powershell -Command "Get-Clipboard"`
+  - **macOS**: `pbpaste`
+  - **Linux**: `xclip -selection clipboard -o` hoặc `xsel --clipboard --output`
+- Xóa clipboard sau khi lấy:
+  - **Windows**: `powershell -Command "Set-Clipboard -Value ''"`
+  - **macOS**: `echo "" | pbcopy`
+  - **Linux**: `echo "" | xclip -selection clipboard` hoặc `xsel --clipboard --input`
 
 **Lưu ý quan trọng:**
 - Browser context (`navigator.clipboard`) không hoạt động với clipboard hệ thống
-- Phải dùng lệnh hệ thống (`pbpaste`/`pbcopy`) trên macOS
+- Script tự động detect OS và dùng lệnh phù hợp
+- Helper functions `readClipboard()` và `clearClipboard()` xử lý cross-platform
 
 ### 5. Phân biệt và Lọc URL
 
@@ -156,12 +172,23 @@ NỘI DUNG:
 ## Các vấn đề đã giải quyết
 
 ### Vấn đề 1: Browser context không truy cập được clipboard hệ thống
-**Nguyên nhân:** `navigator.clipboard.readText()` trong browser context chỉ đọc được clipboard của browser, không đọc được clipboard hệ thống macOS.
+**Nguyên nhân:** `navigator.clipboard.readText()` trong browser context chỉ đọc được clipboard của browser, không đọc được clipboard hệ thống.
 
-**Giải pháp:** Sử dụng lệnh hệ thống:
+**Giải pháp:** Sử dụng lệnh hệ thống cross-platform:
 ```javascript
-const clipboardText = execSync('pbpaste', { encoding: 'utf8' });
-execSync('echo "" | pbcopy'); // Xóa clipboard
+// Helper functions tự động detect OS và dùng lệnh phù hợp
+function readClipboard() {
+    if (platform === 'win32') {
+        return execSync('powershell -Command "Get-Clipboard"', ...);
+    } else if (platform === 'darwin') {
+        return execSync('pbpaste', ...);
+    } else {
+        return execSync('xclip -selection clipboard -o', ...);
+    }
+}
+
+const clipboardText = readClipboard();
+clearClipboard(); // Xóa clipboard
 ```
 
 ### Vấn đề 2: Script click vào nút "Chia sẻ" của group header

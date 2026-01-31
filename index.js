@@ -1,10 +1,69 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const os = require('os');
 
 // Đọc URL từ file config
 const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
 const GROUP_URL = config.GROUP_URL.includes('?') ? config.GROUP_URL : `${config.GROUP_URL}?sorting_setting=CHRONOLOGICAL`;
+
+// Helper functions cho clipboard cross-platform (Windows & macOS)
+function readClipboard() {
+    const platform = os.platform();
+    try {
+        if (platform === 'win32') {
+            // Windows: Dùng PowerShell để đọc clipboard
+            return execSync('powershell -Command "Get-Clipboard"', { encoding: 'utf8', timeout: 1000 }).trim();
+        } else if (platform === 'darwin') {
+            // macOS: Dùng pbpaste
+            return execSync('pbpaste', { encoding: 'utf8', timeout: 1000 }).trim();
+        } else {
+            // Linux: Thử xclip hoặc xsel
+            try {
+                return execSync('xclip -selection clipboard -o', { encoding: 'utf8', timeout: 1000 }).trim();
+            } catch (e) {
+                try {
+                    return execSync('xsel --clipboard --output', { encoding: 'utf8', timeout: 1000 }).trim();
+                } catch (e2) {
+                    throw new Error('Clipboard không được hỗ trợ trên hệ thống này');
+                }
+            }
+        }
+    } catch (error) {
+        throw error;
+    }
+}
+
+function writeClipboard(text) {
+    const platform = os.platform();
+    try {
+        if (platform === 'win32') {
+            // Windows: Dùng PowerShell để ghi clipboard
+            const escapedText = text.replace(/"/g, '\\"');
+            execSync(`powershell -Command "Set-Clipboard -Value \\"${escapedText}\\""`, { timeout: 1000 });
+        } else if (platform === 'darwin') {
+            // macOS: Dùng pbcopy
+            execSync(`echo "${text}" | pbcopy`, { timeout: 1000 });
+        } else {
+            // Linux: Thử xclip hoặc xsel
+            try {
+                execSync(`echo "${text}" | xclip -selection clipboard`, { timeout: 1000 });
+            } catch (e) {
+                try {
+                    execSync(`echo "${text}" | xsel --clipboard --input`, { timeout: 1000 });
+                } catch (e2) {
+                    throw new Error('Clipboard không được hỗ trợ trên hệ thống này');
+                }
+            }
+        }
+    } catch (error) {
+        throw error;
+    }
+}
+
+function clearClipboard() {
+    writeClipboard('');
+}
 
 // Function để mở bài viết và lưu nội dung
 async function savePostContent(page, postUrl, log) {
@@ -351,10 +410,10 @@ async function savePostContent(page, postUrl, log) {
                         // Tăng delay để đảm bảo clipboard đã được cập nhật
                         await new Promise(r => setTimeout(r, 2500));
                         
-                        // Đọc từ clipboard HỆ THỐNG (macOS) thay vì browser context
+                        // Đọc từ clipboard HỆ THỐNG (cross-platform: Windows & macOS)
                         let clipboardText = null;
                         try {
-                            clipboardText = execSync('pbpaste', { encoding: 'utf8', timeout: 1000 }).trim();
+                            clipboardText = readClipboard();
                         } catch (e) {
                             log(`  × Lỗi đọc clipboard hệ thống: ${e.message}`);
                         }
@@ -374,7 +433,7 @@ async function savePostContent(page, postUrl, log) {
                                 await new Promise(r => setTimeout(r, 1000));
                                 // Xóa clipboard
                                 try {
-                                    execSync('echo "" | pbcopy', { timeout: 1000 });
+                                    clearClipboard();
                                 } catch (e) {}
                                 continue;
                             }
@@ -396,7 +455,7 @@ async function savePostContent(page, postUrl, log) {
                             
                             // XÓA CLIPBOARD HỆ THỐNG sau khi lưu để tránh đầy
                             try {
-                                execSync('echo "" | pbcopy', { timeout: 1000 });
+                                clearClipboard();
                                 log('  → Đã xóa clipboard hệ thống');
                             } catch (e) {
                                 log(`  × Không thể xóa clipboard: ${e.message}`);
